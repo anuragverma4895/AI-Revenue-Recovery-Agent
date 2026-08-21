@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
+const path = require('path');
 const { connectDatabase } = require('./config/database');
 const { logger } = require('./utils/logger');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
@@ -30,25 +31,37 @@ app.use('/api/recovery', recoveryRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/audit', auditRoutes);
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    message: 'AI Revenue Recovery Agent API',
-    version: '1.0.0',
-    endpoints: {
-      health: 'GET /api/health',
-      seed: 'POST /api/transactions/seed',
-      transactions: 'GET /api/transactions',
-      analyze: 'POST /api/recovery/analyze',
-      executeAll: 'POST /api/recovery/execute-all',
-      cases: 'GET /api/recovery/cases',
-      metrics: 'GET /api/metrics/summary',
-      breakdown: 'GET /api/metrics/breakdown',
-      audit: 'GET /api/audit'
-    }
+// ─── Serve Frontend (Production) ────────────────────────────────────────────
+if (process.env.NODE_ENV === 'production') {
+  // Serve static files from the React build directory
+  const buildPath = path.join(__dirname, '../../client/dist');
+  app.use(express.static(buildPath));
+
+  // Catch-all route to serve index.html for client-side routing
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(buildPath, 'index.html'));
   });
-});
+} else {
+  // Root endpoint for development
+  app.get('/', (req, res) => {
+    res.json({
+      success: true,
+      message: 'AI Revenue Recovery Agent API',
+      version: '1.0.0',
+      endpoints: {
+        health: 'GET /api/health',
+        seed: 'POST /api/transactions/seed',
+        transactions: 'GET /api/transactions',
+        analyze: 'POST /api/recovery/analyze',
+        executeAll: 'POST /api/recovery/execute-all',
+        cases: 'GET /api/recovery/cases',
+        metrics: 'GET /api/metrics/summary',
+        breakdown: 'GET /api/metrics/breakdown',
+        audit: 'GET /api/audit'
+      }
+    });
+  });
+}
 
 // ─── Error Handling ─────────────────────────────────────────────────────────
 app.use(notFoundHandler);
