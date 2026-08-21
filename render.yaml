@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ai-revenue-recovery-agent
+    env: node
+    buildCommand: npm install --prefix server && npm install --prefix client && npm run build --prefix client
+    startCommand: npm start --prefix server
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: USE_MOCK_AI
+        value: true
+      - key: MONGODB_URI
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
