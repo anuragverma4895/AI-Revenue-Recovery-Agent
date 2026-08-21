@@ -32,7 +32,7 @@ app.use('/api/metrics', metricsRoutes);
 app.use('/api/audit', auditRoutes);
 
 // ─── Serve Frontend (Production) ────────────────────────────────────────────
-if (process.env.NODE_ENV === 'production') {
+if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
   // Serve static files from the React build directory
   const buildPath = path.join(__dirname, '../../client/dist');
   app.use(express.static(buildPath));
