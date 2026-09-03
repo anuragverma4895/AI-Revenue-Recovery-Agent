@@ -321,7 +321,8 @@ const executeCase = async (caseId) => {
   // Update case based on result
   if (result.success) {
     recoveryCase.status = CASE_STATUS.RECOVERED;
-    recoveryCase.amountRecovered = transaction.amount;
+    // Use actual recovered amount from PPS if available, otherwise use transaction amount
+    recoveryCase.amountRecovered = result.recoveredAmount || transaction.amount;
     recoveryCase.resolvedAt = new Date();
 
     await auditService.createLog({
@@ -330,62 +331,101 @@ const executeCase = async (caseId) => {
       caseId: recoveryCase.caseId,
       actionId: actionDoc.actionId,
       action: recoveryCase.recommendedAction,
-      reason: `Revenue recovered: ₹${transaction.amount.toLocaleString()}`,
+      reason: `Revenue recovered: ₹${recoveryCase.amountRecovered.toLocaleString()}`,
       previousState: 'in_progress',
       newState: 'recovered',
       decisionSource: recoveryCase.decisionSource
     });
   } else {
     recoveryCase.retryCount += 1;
-    const retryEligibility = retryManager.canRetry(recoveryCase);
 
-    if (retryEligibility.eligible && recoveryCase.actionParams.escalate_if_fails) {
-      recoveryCase.status = CASE_STATUS.ESCALATED;
-      recoveryCase.resolvedAt = new Date();
-
-      await auditService.createLog({
-        eventType: AUDIT_EVENTS.CASE_ESCALATED,
-        transactionId: transaction.transactionId,
-        caseId: recoveryCase.caseId,
-        actionId: actionDoc.actionId,
-        action: recoveryCase.recommendedAction,
-        reason: `Action failed, escalating as configured. ${retryEligibility.reason}`,
-        previousState: 'in_progress',
-        newState: 'escalated',
-        decisionSource: recoveryCase.decisionSource
-      });
-    } else if (!retryEligibility.eligible) {
+    // Check for permanent PPS rejection (order paid, expired, max attempts by PPS)
+    if (result.permanent) {
       recoveryCase.status = CASE_STATUS.FAILED;
       recoveryCase.resolvedAt = new Date();
 
       await auditService.createLog({
-        eventType: AUDIT_EVENTS.CASE_ESCALATED,
+        eventType: AUDIT_EVENTS.RECOVERY_RETRY_REJECTED,
         transactionId: transaction.transactionId,
         caseId: recoveryCase.caseId,
         actionId: actionDoc.actionId,
         action: recoveryCase.recommendedAction,
-        reason: `Recovery failed: ${retryEligibility.reason}`,
+        reason: `Permanent rejection from Payment System: ${result.failureReason || result.message}`,
         previousState: 'in_progress',
         newState: 'failed',
         decisionSource: recoveryCase.decisionSource
       });
     } else {
-      // Can retry — schedule next attempt
-      const baseDelay = recoveryCase.actionParams.delay_minutes || 15;
-      recoveryCase.nextRetryAt = retryManager.calculateNextRetry(recoveryCase.retryCount, baseDelay);
-      recoveryCase.status = CASE_STATUS.OPEN; // Back to open for retry
+      // Standard retry/escalation logic
+      const retryEligibility = retryManager.canRetry(recoveryCase);
 
-      await auditService.createLog({
-        eventType: AUDIT_EVENTS.ACTION_FAILED,
-        transactionId: transaction.transactionId,
-        caseId: recoveryCase.caseId,
-        actionId: actionDoc.actionId,
-        action: recoveryCase.recommendedAction,
-        reason: `Action failed. Retry ${recoveryCase.retryCount}/${recoveryCase.maxRetries} scheduled.`,
-        previousState: 'in_progress',
-        newState: 'open',
-        decisionSource: recoveryCase.decisionSource
-      });
+      // Also check PPS remaining attempts
+      const ppsRemainingAttempts = result.ppsData?.order?.remainingAttempts;
+      const ppsExhausted = ppsRemainingAttempts !== undefined && ppsRemainingAttempts <= 0;
+
+      if (ppsExhausted) {
+        recoveryCase.status = CASE_STATUS.FAILED;
+        recoveryCase.resolvedAt = new Date();
+
+        await auditService.createLog({
+          eventType: AUDIT_EVENTS.RECOVERY_ESCALATED,
+          transactionId: transaction.transactionId,
+          caseId: recoveryCase.caseId,
+          actionId: actionDoc.actionId,
+          action: recoveryCase.recommendedAction,
+          reason: `Payment System reports no remaining attempts (${ppsRemainingAttempts})`,
+          previousState: 'in_progress',
+          newState: 'failed',
+          decisionSource: recoveryCase.decisionSource
+        });
+      } else if (retryEligibility.eligible && recoveryCase.actionParams.escalate_if_fails) {
+        recoveryCase.status = CASE_STATUS.ESCALATED;
+        recoveryCase.resolvedAt = new Date();
+
+        await auditService.createLog({
+          eventType: AUDIT_EVENTS.CASE_ESCALATED,
+          transactionId: transaction.transactionId,
+          caseId: recoveryCase.caseId,
+          actionId: actionDoc.actionId,
+          action: recoveryCase.recommendedAction,
+          reason: `Action failed, escalating as configured. ${retryEligibility.reason}`,
+          previousState: 'in_progress',
+          newState: 'escalated',
+          decisionSource: recoveryCase.decisionSource
+        });
+      } else if (!retryEligibility.eligible) {
+        recoveryCase.status = CASE_STATUS.FAILED;
+        recoveryCase.resolvedAt = new Date();
+
+        await auditService.createLog({
+          eventType: AUDIT_EVENTS.CASE_ESCALATED,
+          transactionId: transaction.transactionId,
+          caseId: recoveryCase.caseId,
+          actionId: actionDoc.actionId,
+          action: recoveryCase.recommendedAction,
+          reason: `Recovery failed: ${retryEligibility.reason}`,
+          previousState: 'in_progress',
+          newState: 'failed',
+          decisionSource: recoveryCase.decisionSource
+        });
+      } else {
+        // Can retry — schedule next attempt
+        const baseDelay = recoveryCase.actionParams.delay_minutes || 15;
+        recoveryCase.nextRetryAt = retryManager.calculateNextRetry(recoveryCase.retryCount, baseDelay);
+        recoveryCase.status = CASE_STATUS.OPEN; // Back to open for retry
+
+        await auditService.createLog({
+          eventType: AUDIT_EVENTS.ACTION_FAILED,
+          transactionId: transaction.transactionId,
+          caseId: recoveryCase.caseId,
+          actionId: actionDoc.actionId,
+          action: recoveryCase.recommendedAction,
+          reason: `Action failed. Retry ${recoveryCase.retryCount}/${recoveryCase.maxRetries} scheduled.`,
+          previousState: 'in_progress',
+          newState: 'open',
+          decisionSource: recoveryCase.decisionSource
+        });
+      }
     }
   }
 

@@ -97,6 +97,7 @@ export default function TransactionList() {
                     <th>Amount</th>
                     <th>Method</th>
                     <th>Status</th>
+                    <th>Source</th>
                     <th>Failure Reason</th>
                     <th>Attempts</th>
                     <th>Date</th>
@@ -110,6 +111,7 @@ export default function TransactionList() {
                       <td style={{ fontWeight: 600 }}>₹{txn.amount.toLocaleString()}</td>
                       <td style={{ textTransform: 'uppercase', fontSize: 12 }}>{txn.paymentMethod}</td>
                       <td><span className={statusBadge(txn.status)}><span className="badge-dot"></span>{txn.status}</span></td>
+                      <td><span className={`badge ${txn.source === 'payment_processing_system' ? 'badge-critical' : 'badge-low'}`} style={{ fontSize: 10, padding: '2px 8px' }}>{txn.source === 'payment_processing_system' ? 'PPS' : 'Seed'}</span></td>
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{txn.failureReason || '—'}</td>
                       <td>{txn.attemptCount}/{txn.maxAttempts}</td>
                       <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{formatDate(txn.createdAt)}</td>

@@ -21,7 +21,16 @@ const auditLogSchema = new mongoose.Schema({
       'action_failed',
       'case_resolved',
       'case_escalated',
-      'system_error'
+      'system_error',
+      // Integration events (Phase 2)
+      'payment_failure_received',
+      'recovery_case_created',
+      'recovery_decision_made',
+      'recovery_retry_requested',
+      'recovery_retry_succeeded',
+      'recovery_retry_failed',
+      'recovery_escalated',
+      'recovery_retry_rejected'
     ],
     index: true
   },

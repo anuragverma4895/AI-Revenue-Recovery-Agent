@@ -24,12 +24,14 @@ const transactionRoutes = require('./routes/transactionRoutes');
 const recoveryRoutes = require('./routes/recoveryRoutes');
 const metricsRoutes = require('./routes/metricsRoutes');
 const auditRoutes = require('./routes/auditRoutes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
 app.use('/api/health', healthRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/recovery', recoveryRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/webhooks', webhookRoutes);
 
 // ─── Serve Frontend (Production) ────────────────────────────────────────────
 if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
@@ -57,7 +59,8 @@ if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
         cases: 'GET /api/recovery/cases',
         metrics: 'GET /api/metrics/summary',
         breakdown: 'GET /api/metrics/breakdown',
-        audit: 'GET /api/audit'
+        audit: 'GET /api/audit',
+        webhookPaymentFailed: 'POST /api/webhooks/payment-failed'
       }
     });
   });

@@ -76,7 +76,21 @@ const AUDIT_EVENTS = {
   ACTION_FAILED: 'action_failed',
   CASE_RESOLVED: 'case_resolved',
   CASE_ESCALATED: 'case_escalated',
-  SYSTEM_ERROR: 'system_error'
+  SYSTEM_ERROR: 'system_error',
+  // Integration events (Phase 2)
+  PAYMENT_FAILURE_RECEIVED: 'payment_failure_received',
+  RECOVERY_CASE_CREATED: 'recovery_case_created',
+  RECOVERY_DECISION_MADE: 'recovery_decision_made',
+  RECOVERY_RETRY_REQUESTED: 'recovery_retry_requested',
+  RECOVERY_RETRY_SUCCEEDED: 'recovery_retry_succeeded',
+  RECOVERY_RETRY_FAILED: 'recovery_retry_failed',
+  RECOVERY_ESCALATED: 'recovery_escalated',
+  RECOVERY_RETRY_REJECTED: 'recovery_retry_rejected'
+};
+
+const TRANSACTION_SOURCES = {
+  SEED: 'seed',
+  PAYMENT_PROCESSING_SYSTEM: 'payment_processing_system'
 };
 
 const PAYMENT_METHODS = {
@@ -145,6 +159,7 @@ module.exports = {
   DECISION_SOURCES,
   ACTION_STATUS,
   AUDIT_EVENTS,
+  TRANSACTION_SOURCES,
   PAYMENT_METHODS,
   POLICY,
   AI_CONFIG,

@@ -1,14 +1,18 @@
 const RecoveryAction = require('../models/RecoveryAction');
 const Transaction = require('../models/Transaction');
-const { SIMULATED_SUCCESS_RATES, ACTION_STATUS, TRANSACTION_STATUS } = require('../config/constants');
+const { SIMULATED_SUCCESS_RATES, ACTION_STATUS, TRANSACTION_STATUS, TRANSACTION_SOURCES, AUDIT_EVENTS } = require('../config/constants');
 const { generateId, generateIdempotencyKey } = require('../utils/idGenerator');
 const { logger } = require('../utils/logger');
+const paymentClient = require('./paymentClient');
+const auditService = require('./auditService');
 
 /**
  * Recovery Action Executor
  * 
- * Executes bounded recovery actions. All actions are SIMULATED for the demo.
- * Uses seeded-random based on transactionId for deterministic outcomes.
+ * Executes bounded recovery actions.
+ * 
+ * For seed/demo transactions: uses simulated outcomes (deterministic hash).
+ * For PPS-integrated transactions: makes real HTTP calls to Payment Processing System.
  * 
  * Key safety property: only executes whitelisted actions through the
  * action handler map — unknown actions are rejected.
@@ -29,6 +33,7 @@ const hashCode = (str) => {
 /**
  * Determine simulated success/failure based on transaction ID.
  * Same transactionId + action always produces the same outcome.
+ * Used ONLY for seed/demo data.
  */
 const simulateOutcome = (transactionId, action, attemptNumber = 1) => {
   const seed = hashCode(`${transactionId}:${action}:${attemptNumber}`);
@@ -40,7 +45,13 @@ const simulateOutcome = (transactionId, action, attemptNumber = 1) => {
 // ─── Action Handlers ────────────────────────────────────────────────────────
 
 const actionHandlers = {
-  retry_payment: async (transaction, actionParams) => {
+  retry_payment: async (transaction, actionParams, recoveryCase) => {
+    // ── REAL integration for PPS transactions ──────────────────────────
+    if (transaction.source === TRANSACTION_SOURCES.PAYMENT_PROCESSING_SYSTEM) {
+      return await handleRealRetry(transaction, actionParams, recoveryCase);
+    }
+
+    // ── Simulated for seed/demo data ───────────────────────────────────
     const success = simulateOutcome(transaction.transactionId, 'retry_payment', transaction.attemptCount);
     return {
       success,
@@ -126,6 +137,133 @@ const actionHandlers = {
   }
 };
 
+// ─── Real PPS Retry Handler ─────────────────────────────────────────────────
+
+/**
+ * Execute a real payment retry through the Payment Processing System.
+ * 
+ * @param {Object} transaction - Transaction document
+ * @param {Object} actionParams - Action parameters
+ * @param {Object} recoveryCase - Recovery case document
+ * @returns {Promise<Object>} Result in the same format as simulated handlers
+ */
+const handleRealRetry = async (transaction, actionParams, recoveryCase) => {
+  if (!transaction.orderId) {
+    logger.error('Cannot retry payment: missing orderId', {
+      transactionId: transaction.transactionId
+    });
+    return {
+      success: false,
+      message: 'Cannot retry payment: no orderId associated with this transaction',
+      simulatedOutcome: null,
+      newStatus: TRANSACTION_STATUS.FAILED,
+      permanent: true
+    };
+  }
+
+  // Use case's actionId as recoveryActionId for idempotency at PPS
+  const recoveryActionId = recoveryCase
+    ? `${recoveryCase.caseId}-retry-${(recoveryCase.retryCount || 0) + 1}`
+    : `${transaction.transactionId}-retry-${transaction.attemptCount}`;
+
+  // Audit: retry requested
+  await auditService.createLog({
+    eventType: AUDIT_EVENTS.RECOVERY_RETRY_REQUESTED,
+    transactionId: transaction.transactionId,
+    caseId: recoveryCase?.caseId || null,
+    action: 'retry_payment',
+    reason: `Real payment retry requested via Payment Processing System`,
+    metadata: {
+      orderId: transaction.orderId,
+      recoveryActionId,
+      source: TRANSACTION_SOURCES.PAYMENT_PROCESSING_SYSTEM
+    }
+  });
+
+  // Call PPS
+  const ppsResult = await paymentClient.retryPayment({
+    orderId: transaction.orderId,
+    recoveryActionId,
+    method: transaction.paymentMethod
+  });
+
+  if (ppsResult.success) {
+    const paymentData = ppsResult.data?.payment || {};
+    const orderData = ppsResult.data?.order || {};
+    const recoveredAmount = paymentData.amount || transaction.amount;
+
+    // Audit: retry succeeded
+    await auditService.createLog({
+      eventType: AUDIT_EVENTS.RECOVERY_RETRY_SUCCEEDED,
+      transactionId: transaction.transactionId,
+      caseId: recoveryCase?.caseId || null,
+      action: 'retry_payment',
+      reason: `Payment retry succeeded via PPS. Amount: ${recoveredAmount}`,
+      previousState: TRANSACTION_STATUS.FAILED,
+      newState: TRANSACTION_STATUS.SUCCESS,
+      metadata: {
+        paymentId: paymentData.paymentId,
+        orderId: transaction.orderId,
+        amount: recoveredAmount,
+        paymentStatus: paymentData.status,
+        orderStatus: orderData.status,
+        remainingAttempts: orderData.remainingAttempts,
+        idempotencyHit: ppsResult.idempotencyHit
+      }
+    });
+
+    return {
+      success: true,
+      message: `Payment retry successful via Payment Processing System. Amount recovered: ${recoveredAmount}`,
+      simulatedOutcome: null,
+      newStatus: TRANSACTION_STATUS.SUCCESS,
+      recoveredAmount,
+      ppsData: ppsResult.data
+    };
+  }
+
+  // Failure
+  const paymentData = ppsResult.data?.payment || {};
+  const orderData = ppsResult.data?.order || {};
+  const failureReason = paymentData.failureReason || ppsResult.error || 'Unknown PPS error';
+
+  // Determine if this is a permanent rejection
+  const isPermanent = ppsResult.permanent === true;
+
+  // Audit: retry failed or rejected
+  const auditEventType = isPermanent
+    ? AUDIT_EVENTS.RECOVERY_RETRY_REJECTED
+    : AUDIT_EVENTS.RECOVERY_RETRY_FAILED;
+
+  await auditService.createLog({
+    eventType: auditEventType,
+    transactionId: transaction.transactionId,
+    caseId: recoveryCase?.caseId || null,
+    action: 'retry_payment',
+    reason: `Payment retry ${isPermanent ? 'permanently rejected' : 'failed'}: ${failureReason}`,
+    metadata: {
+      orderId: transaction.orderId,
+      httpStatus: ppsResult.httpStatus,
+      failureReason,
+      permanent: isPermanent,
+      paymentStatus: paymentData.status,
+      orderStatus: orderData.status,
+      remainingAttempts: orderData.remainingAttempts,
+      retryCount: paymentData.retryCount
+    }
+  });
+
+  return {
+    success: false,
+    message: `Payment retry failed: ${failureReason}`,
+    simulatedOutcome: null,
+    newStatus: TRANSACTION_STATUS.FAILED,
+    permanent: isPermanent,
+    ppsData: ppsResult.data,
+    failureReason
+  };
+};
+
 // ─── Main Executor ──────────────────────────────────────────────────────────
 
 /**
@@ -183,7 +321,7 @@ const executeAction = async ({ recoveryCase, transaction }) => {
 
   // ── Execute the action ────────────────────────────────────────────────
   try {
-    const result = await handler(transaction, actionParams);
+    const result = await handler(transaction, actionParams, recoveryCase);
 
     // Update action with result
     actionDoc.status = result.success ? ACTION_STATUS.SUCCESS : ACTION_STATUS.FAILED;
@@ -195,31 +333,38 @@ const executeAction = async ({ recoveryCase, transaction }) => {
     };
     await actionDoc.save();
 
-    // Update transaction status if action changed it
+    // Update transaction status
+    const txnUpdate = {
+      attemptCount: transaction.attemptCount + 1,
+      lastAttemptAt: new Date()
+    };
+
     if (result.success) {
-      await Transaction.updateOne(
-        { transactionId: transaction.transactionId },
-        {
-          status: result.newStatus,
-          attemptCount: transaction.attemptCount + 1,
-          lastAttemptAt: new Date()
-        }
-      );
-    } else {
-      await Transaction.updateOne(
-        { transactionId: transaction.transactionId },
-        {
-          attemptCount: transaction.attemptCount + 1,
-          lastAttemptAt: new Date()
-        }
-      );
+      txnUpdate.status = result.newStatus;
     }
+
+    // If PPS provided remaining attempts data, update transaction
+    if (result.ppsData?.order) {
+      const orderData = result.ppsData.order;
+      if (orderData.remainingAttempts !== undefined) {
+        txnUpdate.remainingAttempts = orderData.remainingAttempts;
+      }
+      if (orderData.attempts !== undefined) {
+        txnUpdate.attemptCount = orderData.attempts;
+      }
+    }
+
+    await Transaction.updateOne(
+      { transactionId: transaction.transactionId },
+      txnUpdate
+    );
 
     logger.info('Action executed', {
       actionId: actionDoc.actionId,
       action,
       success: result.success,
-      transactionId: transaction.transactionId
+      transactionId: transaction.transactionId,
+      source: transaction.source || 'seed'
     });
 
     return { duplicate: false, actionDoc, result };
@@ -247,3 +392,4 @@ const executeAction = async ({ recoveryCase, transaction }) => {
 };
 
 module.exports = { executeAction, simulateOutcome };
+

@@ -7,10 +7,28 @@ const transactionSchema = new mongoose.Schema({
     unique: true,
     index: true
   },
+  // External payment ID from Payment Processing System (null for seed data)
+  paymentId: {
+    type: String,
+    default: null,
+    sparse: true,
+    index: true
+  },
+  // Order ID from Payment Processing System
+  orderId: {
+    type: String,
+    default: null,
+    index: true
+  },
   customerId: {
     type: String,
     required: true,
     index: true
+  },
+  // User ID from Payment Processing System
+  userId: {
+    type: String,
+    default: null
   },
   customerEmail: {
     type: String,
@@ -58,6 +76,10 @@ const transactionSchema = new mongoose.Schema({
     type: Number,
     default: 3
   },
+  remainingAttempts: {
+    type: Number,
+    default: null
+  },
   gatewayResponse: {
     type: String,
     default: null
@@ -78,6 +100,13 @@ const transactionSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  // Distinguishes seed/demo data from real PPS integration data
+  source: {
+    type: String,
+    enum: ['seed', 'payment_processing_system'],
+    default: 'seed',
+    index: true
+  },
   metadata: {
     customerTotalTransactions: { type: Number, default: 0 },
     customerSuccessRate: { type: Number, default: 0 },
@@ -89,3 +118,4 @@ const transactionSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model('Transaction', transactionSchema);
+
