@@ -34,12 +34,6 @@ const generateIdempotencyKey = (caseId, action, attemptNumber) => {
   return `${caseId}:${action}:${attemptNumber}`;
 };
 
-/**
- * Reset counters (useful for seeding).
- */
-const resetCounters = () => {
-  counters = { transaction: 0, case: 0, action: 0, audit: 0 };
-};
 
 /**
  * Set counter to a specific value (useful after loading existing data).
@@ -54,4 +48,4 @@ const setCounter = (type, value) => {
   if (key) counters[key] = value;
 };
 
-module.exports = { generateId, generateIdempotencyKey, resetCounters, setCounter };
+module.exports = { generateId, generateIdempotencyKey, setCounter };

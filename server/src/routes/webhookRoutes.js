@@ -4,6 +4,22 @@ const { verifyWebhookSignature } = require('../middleware/webhookAuth');
 const integrationService = require('../services/integrationService');
 const { logger } = require('../utils/logger');
 
+const SENSITIVE_PAYLOAD_KEYS = new Set([
+  'cardnumber', 'card_number', 'cvv', 'cvc', 'password', 'jwt', 'token',
+  'apikey', 'api_key', 'internalapikey', 'internal_api_key', 'secret'
+]);
+
+const containsSensitiveKey = (value) => {
+  if (!value || typeof value !== 'object') return false;
+
+  return Object.entries(value).some(([key, nestedValue]) => {
+    const normalizedKey = key.replace(/[-_]/g, '').toLowerCase();
+    return SENSITIVE_PAYLOAD_KEYS.has(key.toLowerCase()) ||
+      SENSITIVE_PAYLOAD_KEYS.has(normalizedKey) ||
+      containsSensitiveKey(nestedValue);
+  });
+};
+
 /**
  * POST /api/webhooks/payment-failed
  * 
@@ -21,7 +37,17 @@ router.post('/payment-failed', verifyWebhookSignature, async (req, res, next) =>
   try {
     const payload = req.body;
 
-    // ── Validate required fields ──────────────────────────────────────────
+    if (containsSensitiveKey(payload)) {
+      logger.warn('Webhook payload rejected because it contains sensitive fields', {
+        paymentId: payload.paymentId
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'Webhook payload contains sensitive fields'
+      });
+    }
+
+    // Validate required fields ──────────────────────────────────────────
     const requiredFields = ['paymentId', 'orderId', 'amount', 'currency', 'status', 'method'];
     const missingFields = requiredFields.filter(field => !payload[field] && payload[field] !== 0);
 

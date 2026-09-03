@@ -1,5 +1,6 @@
 const Transaction = require('../models/Transaction');
 const RecoveryCase = require('../models/RecoveryCase');
+const RecoveryAction = require('../models/RecoveryAction');
 const { batchAssessRisk } = require('../engines/riskDetector');
 const ruleEngine = require('../engines/ruleEngine');
 const aiEngine = require('../engines/aiEngine');
@@ -14,7 +15,8 @@ const {
   DECISION_SOURCES,
   AUDIT_EVENTS,
   RECOVERY_ACTIONS,
-  TRANSACTION_STATUS
+  TRANSACTION_STATUS,
+  TRANSACTION_SOURCES
 } = require('../config/constants');
 
 /**
@@ -287,6 +289,22 @@ const executeCase = async (caseId) => {
   }
 
   if (['recovered', 'closed'].includes(recoveryCase.status)) {
+    const existingAction = await RecoveryAction.findOne({
+      caseId: recoveryCase.caseId,
+      action: recoveryCase.recommendedAction
+    }).sort({ createdAt: -1 });
+
+    if (existingAction) {
+      return {
+        duplicate: true,
+        caseId: recoveryCase.caseId,
+        action: recoveryCase.recommendedAction,
+        actionStatus: 'duplicate',
+        message: `Case ${caseId} is already ${recoveryCase.status}; returning existing action result`,
+        existingAction
+      };
+    }
+
     throw Object.assign(
       new Error(`Case ${caseId} is already ${recoveryCase.status}`),
       { statusCode: 400 }
@@ -486,11 +504,12 @@ const executeAll = async () => {
 
 // ─── Query Helpers ──────────────────────────────────────────────────────────
 
-const getCases = async ({ status, decisionSource, riskLevel, page = 1, limit = 20 } = {}) => {
+const getCases = async ({ status, decisionSource, riskLevel, source, page = 1, limit = 20 } = {}) => {
   const filter = {};
   if (status) filter.status = status;
   if (decisionSource) filter.decisionSource = decisionSource;
   if (riskLevel) filter.riskLevel = riskLevel;
+  if (source) filter.source = source;
 
   const total = await RecoveryCase.countDocuments(filter);
   const data = await RecoveryCase.find(filter)

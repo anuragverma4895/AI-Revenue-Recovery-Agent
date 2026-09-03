@@ -2,16 +2,9 @@ const crypto = require('crypto');
 const { logger } = require('../utils/logger');
 
 /**
- * Webhook Signature Verification Middleware
- * 
- * Verifies the x-webhook-signature header using HMAC-SHA256.
- * Matches the Payment Processing System's signature generation:
- *   crypto.createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex')
- * 
- * Security:
- * - Uses crypto.timingSafeEqual for constant-time comparison (prevents timing attacks)
- * - Never logs the webhook secret
- * - Rejects requests without a signature
+ * Verifies PPS payment.failed webhooks with HMAC-SHA256.
+ * WEBHOOK_SECRET is backend-only and must match the secret PPS uses for
+ * RECOVERY_WEBHOOK_SECRET when sending to this service.
  */
 const verifyWebhookSignature = (req, res, next) => {
   const signature = req.headers['x-webhook-signature'];
@@ -37,10 +30,10 @@ const verifyWebhookSignature = (req, res, next) => {
   }
 
   try {
-    // Compute expected signature using the same method as PPS
+    const payloadStr = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
     const expectedSignature = crypto
       .createHmac('sha256', secret)
-      .update(JSON.stringify(req.body))
+      .update(payloadStr)
       .digest('hex');
 
     const sigBuffer = Buffer.from(signature, 'hex');
@@ -57,12 +50,9 @@ const verifyWebhookSignature = (req, res, next) => {
       });
     }
 
-    // Signature valid
     next();
   } catch (error) {
-    logger.error('Webhook signature verification error', {
-      error: error.message
-    });
+    logger.error('Webhook signature verification error', { error: error.message });
     return res.status(401).json({
       success: false,
       error: 'Webhook signature verification failed'

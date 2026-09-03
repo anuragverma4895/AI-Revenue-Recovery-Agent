@@ -1,112 +1,95 @@
 # AI Revenue Recovery Agent
 
-AI-powered revenue recovery system for failed, pending, and abandoned payment transactions. The app analyzes at-risk payments, creates recovery cases using rule-based and mock/real AI decisions, validates policy constraints, executes recovery actions, and keeps an immutable audit trail.
+Separate production-ready service for receiving Payment Processing System payment failure events, analyzing recovery risk, creating recovery cases/actions, and executing approved recovery actions through PPS APIs only.
 
-## Features
+## Architecture
 
-- Recovery dashboard with revenue, recovery rate, decision-source, and action metrics
-- Transaction list and transaction detail views
-- Risk detection for failed, pending, and abandoned payments
-- Rule engine for deterministic recovery decisions
-- Mock AI engine for local demos and optional Gemini integration for real AI decisions
-- Policy validation before automated recovery
-- Recovery case management with filters and per-case execution
-- Audit log with event, transaction, action, and decision metadata
-- Synthetic seed data for demos
+This repository stays separate from the Payment Processing System repository.
 
-## Tech Stack
+- Recovery Agent owns failed-event intake, normalization, risk detection, AI/rule decisions, policy validation, recovery cases, recovery actions, audit logs, and recovery metrics.
+- Payment Processing System owns orders, payments, payment status, actual payment execution, actual retries, and PPS database state.
+- Recovery Agent never writes to PPS MongoDB collections. It communicates with PPS only through webhooks and APIs.
 
-- Frontend: React, Vite, React Router, Recharts, Lucide icons
-- Backend: Node.js, Express, Mongoose
-- Database: MongoDB
-- AI: Mock AI by default, Gemini optional
+## Integration Flow
 
-## Project Structure
+PPS sends failed payments to Recovery Agent:
 
 ```text
-client/   React frontend
-server/   Express API, recovery engines, MongoDB models
+PPS -> POST /api/webhooks/payment-failed
 ```
 
-## Setup
+Recovery Agent verifies HMAC, validates the safe payload, normalizes `gatewayResponse`, upserts a transaction, runs risk/decision/policy logic, creates at most one recovery case, and writes audit logs.
 
-### 1. Install dependencies
+For `retry_payment`, Recovery Agent calls PPS:
 
-```bash
-cd client
-npm install
-
-cd ../server
-npm install
+```text
+POST ${PAYMENT_PROCESSING_URL}/api/internal/retry-payment
+x-internal-api-key: <INTERNAL_API_KEY>
 ```
 
-### 2. Configure backend environment
+The request contains only safe fields such as `orderId`, `recoveryActionId`, and optional `method`. It never sends card numbers, CVV, JWTs, passwords, or secrets. Recovery Agent marks a case recovered only when PPS confirms the retry succeeded with successful payment/order state.
 
-Create `server/.env` from `server/.env.example` and set your MongoDB URI.
-
-```env
-PORT=5000
-NODE_ENV=development
-MONGODB_URI=your_mongodb_connection_string
-USE_MOCK_AI=true
-GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.0-flash
-```
-
-For local demo mode, keep `USE_MOCK_AI=true`. Set `USE_MOCK_AI=false` only when a valid Gemini API key is configured.
-
-### 3. Run the backend
-
-```bash
-cd server
-npm run dev
-```
-
-The API runs on `http://localhost:5000`.
-
-### 4. Run the frontend
-
-```bash
-cd client
-npm run dev
-```
-
-The frontend runs on `http://localhost:5173` and proxies `/api` requests to the backend.
-
-## Demo Flow
-
-1. Open the Dashboard.
-2. Click `Seed Data` to load synthetic transactions.
-3. Click `Analyze` to create recovery cases.
-4. Review cases on the Recovery Cases page.
-5. Execute individual cases or use `Execute All` from the Dashboard.
-6. Check the Audit Log for the full decision and execution trail.
-
-## API Overview
+## API Endpoints
 
 - `GET /api/health`
+- `POST /api/webhooks/payment-failed`
 - `POST /api/transactions/seed`
-- `GET /api/transactions`
+- `GET /api/transactions?source=seed|payment_processing_system`
 - `GET /api/transactions/:transactionId`
 - `POST /api/recovery/analyze`
 - `POST /api/recovery/execute/:caseId`
 - `POST /api/recovery/execute-all`
-- `GET /api/recovery/cases`
+- `GET /api/recovery/cases?source=seed|payment_processing_system`
 - `GET /api/recovery/cases/:caseId`
-- `GET /api/metrics/summary`
-- `GET /api/metrics/breakdown`
+- `GET /api/metrics/summary?source=seed|payment_processing_system`
+- `GET /api/metrics/breakdown?source=seed|payment_processing_system`
 - `GET /api/audit`
 - `GET /api/audit/:transactionId`
 
-## Build
+## Environment Variables
 
-```bash
-cd client
-npm run build
+Create `server/.env` from `server/.env.example`.
+
+```env
+PORT=5001
+NODE_ENV=development
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/revenue-recovery
+PAYMENT_PROCESSING_URL=http://localhost:5000
+PPS_REQUEST_TIMEOUT_MS=15000
+INTERNAL_API_KEY=replace_with_shared_internal_api_key
+WEBHOOK_SECRET=replace_with_shared_webhook_secret
+USE_MOCK_AI=true
+GEMINI_API_KEY=replace_with_gemini_api_key
+GEMINI_MODEL=gemini-2.0-flash
+GEMINI_TIMEOUT_MS=10000
+MAX_RETRY_ATTEMPTS=5
+AI_CONFIDENCE_THRESHOLD=0.5
+MAX_AUTO_RECOVERY_AMOUNT=100000
 ```
 
-## Notes
+For Render, set the same backend variables. Change only `PAYMENT_PROCESSING_URL` to point at the deployed PPS backend, for example `https://<deployed-payment-processing-system-url>`. `INTERNAL_API_KEY` must match PPS. `WEBHOOK_SECRET` must match the secret PPS uses to sign recovery webhooks.
 
-- Do not commit `server/.env`.
-- MongoDB is required for the backend to start.
-- The app works without Gemini when mock AI mode is enabled.
+## Local Development
+
+```bash
+npm install --prefix server
+npm install --prefix client
+npm run dev --prefix server
+npm run dev --prefix client
+```
+
+The frontend uses `/api` and Vite proxies to the backend. Override dev proxy with `VITE_DEV_API_PROXY_TARGET` if needed.
+
+## Seed Mode
+
+`POST /api/transactions/seed` loads synthetic demo data with `source=seed`. It removes only previous seed data and does not delete real `source=payment_processing_system` transactions/cases. Metrics can be filtered by source so demo data and real PPS recovery data are distinguishable.
+
+## Deployment
+
+Render can deploy this repository as one web service using `render.yaml`.
+
+- Build command: `npm install --prefix server && npm install --prefix client && npm run build --prefix client`
+- Start command: `npm start --prefix server`
+- Health check: `/api/health`
+
+Do not commit `server/.env`, logs, build output, or `.codex-runtime/`.

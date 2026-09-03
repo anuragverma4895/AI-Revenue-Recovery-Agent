@@ -1,4 +1,4 @@
-﻿# dependencies
+# dependencies
 node_modules/
 */node_modules/
 
@@ -13,6 +13,9 @@ build/
 !*.env.example
 server/.env
 client/.env
+
+# test artifacts
+.codex-runtime
 
 # logs
 *.log

@@ -29,9 +29,10 @@ router.post('/execute/:caseId', async (req, res, next) => {
     const result = await recoveryService.executeCase(req.params.caseId);
 
     if (result.actionStatus === 'duplicate') {
-      return res.status(409).json({
-        success: false,
-        error: 'Action already executed',
+      return res.json({
+        success: true,
+        duplicate: true,
+        message: 'Action already executed; returning existing result',
         existingAction: result.existingAction
       });
     }
@@ -65,7 +66,7 @@ router.post('/execute-all', async (req, res, next) => {
  */
 router.get('/cases', async (req, res, next) => {
   try {
-    const { status, decisionSource, riskLevel, page, limit } = req.query;
+    const { status, decisionSource, riskLevel, source, page, limit } = req.query;
     const result = await recoveryService.getCases({
       status,
       decisionSource,

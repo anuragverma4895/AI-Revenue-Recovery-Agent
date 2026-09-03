@@ -5,25 +5,29 @@ const RecoveryCase = require('../models/RecoveryCase');
 const RecoveryAction = require('../models/RecoveryAction');
 const AuditLog = require('../models/AuditLog');
 const { seedTransactions } = require('../data/seedTransactions');
-const { resetCounters } = require('../utils/idGenerator');
+const { TRANSACTION_SOURCES } = require('../config/constants');
 const { logger } = require('../utils/logger');
 
 /**
  * POST /api/transactions/seed
  * Seed the database with synthetic transactions.
- * Idempotent — clears existing data first.
+ * Idempotent: replaces seed data only and preserves real PPS data.
  */
 router.post('/seed', async (req, res, next) => {
   try {
-    // Clear all collections
-    await Transaction.deleteMany({});
-    await RecoveryCase.deleteMany({});
-    await RecoveryAction.deleteMany({});
-    await AuditLog.deleteMany({});
-    resetCounters();
+    const seedTransactionIds = seedTransactions.map(transaction => transaction.transactionId);
 
-    // Insert seed data
-    await Transaction.insertMany(seedTransactions);
+    await Transaction.deleteMany({ source: TRANSACTION_SOURCES.SEED });
+    await RecoveryCase.deleteMany({ source: TRANSACTION_SOURCES.SEED });
+    await RecoveryAction.deleteMany({ transactionId: { $in: seedTransactionIds } });
+    await AuditLog.deleteMany({ transactionId: { $in: seedTransactionIds } });
+
+    const normalizedSeedTransactions = seedTransactions.map(transaction => ({
+      ...transaction,
+      source: TRANSACTION_SOURCES.SEED
+    }));
+
+    await Transaction.insertMany(normalizedSeedTransactions);
 
     // Count by status
     const counts = {
@@ -57,6 +61,7 @@ router.get('/', async (req, res, next) => {
     const filter = {};
     if (status) filter.status = status;
     if (paymentMethod) filter.paymentMethod = paymentMethod;
+    if (req.query.source) filter.source = req.query.source;
     if (search) {
       filter.$or = [
         { transactionId: { $regex: search, $options: 'i' } },

@@ -37,10 +37,21 @@ const mapPaymentMethod = (ppsMethod) => {
 };
 
 // Map PPS failure reasons to failure codes for the rule engine
+const stringifyGatewayResponse = (gatewayResponse) => {
+  if (!gatewayResponse) return '';
+  if (typeof gatewayResponse === 'string') return gatewayResponse;
+
+  try {
+    return JSON.stringify(gatewayResponse);
+  } catch (error) {
+    return String(gatewayResponse);
+  }
+};
+
 const mapFailureCode = (failureReason, gatewayResponse) => {
   if (!failureReason) return null;
   const reason = (failureReason || '').toLowerCase();
-  const gateway = (gatewayResponse || '').toLowerCase();
+  const gateway = stringifyGatewayResponse(gatewayResponse).toLowerCase();
 
   if (reason.includes('timeout') && reason.includes('bank')) return 'BANK_TIMEOUT';
   if (reason.includes('timeout') && reason.includes('upi')) return 'UPI_TIMEOUT';
@@ -89,6 +100,8 @@ const handlePaymentFailure = async (payload) => {
     remainingAttempts
   } = payload;
 
+  const gatewayResponseText = stringifyGatewayResponse(gatewayResponse);
+
   logger.info('Processing payment failure from PPS', {
     paymentId,
     orderId,
@@ -97,7 +110,7 @@ const handlePaymentFailure = async (payload) => {
     failureReason
   });
 
-  // ── Step 1: Check for existing transaction with this paymentId ──────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 1: Check for existing transaction with this paymentId Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const existingTransaction = await Transaction.findOne({ paymentId });
   
   if (existingTransaction) {
@@ -107,7 +120,7 @@ const handlePaymentFailure = async (payload) => {
     });
     
     if (existingCase) {
-      logger.info('Duplicate payment failure event — case already exists', {
+      logger.info('Duplicate payment failure event Ã¢â‚¬â€ case already exists', {
         paymentId,
         transactionId: existingTransaction.transactionId,
         caseId: existingCase.caseId
@@ -119,7 +132,7 @@ const handlePaymentFailure = async (payload) => {
       };
     }
 
-    // Transaction exists but no case yet — update and continue to analysis
+    // Transaction exists but no case yet Ã¢â‚¬â€ update and continue to analysis
     existingTransaction.status = TRANSACTION_STATUS.FAILED;
     existingTransaction.failureReason = failureReason || existingTransaction.failureReason;
     existingTransaction.failureCode = mapFailureCode(failureReason, gatewayResponse);
@@ -127,13 +140,13 @@ const handlePaymentFailure = async (payload) => {
     existingTransaction.maxAttempts = maxAttempts || existingTransaction.maxAttempts;
     existingTransaction.remainingAttempts = remainingAttempts ?? existingTransaction.remainingAttempts;
     existingTransaction.lastAttemptAt = timestamp ? new Date(timestamp) : new Date();
-    existingTransaction.gatewayResponse = gatewayResponse || existingTransaction.gatewayResponse;
+    existingTransaction.gatewayResponse = gatewayResponseText || existingTransaction.gatewayResponse;
     await existingTransaction.save();
 
     return await analyzeAndCreateCase(existingTransaction);
   }
 
-  // ── Step 2: Create new transaction from PPS data ────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 2: Create new transaction from PPS data Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const transactionId = `PPS-${paymentId}`;
   const failureCode = mapFailureCode(failureReason, gatewayResponse);
 
@@ -154,7 +167,7 @@ const handlePaymentFailure = async (payload) => {
     attemptCount: attempts || 1,
     maxAttempts: maxAttempts || 3,
     remainingAttempts: remainingAttempts ?? null,
-    gatewayResponse: gatewayResponse || null,
+    gatewayResponse: gatewayResponseText || null,
     lastAttemptAt: timestamp ? new Date(timestamp) : new Date(),
     source: TRANSACTION_SOURCES.PAYMENT_PROCESSING_SYSTEM,
     metadata: {
@@ -172,7 +185,7 @@ const handlePaymentFailure = async (payload) => {
     amount
   });
 
-  // ── Step 3: Audit log — payment failure received ────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 3: Audit log Ã¢â‚¬â€ payment failure received Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   await auditService.createLog({
     eventType: AUDIT_EVENTS.PAYMENT_FAILURE_RECEIVED,
     transactionId: transaction.transactionId,
@@ -190,7 +203,7 @@ const handlePaymentFailure = async (payload) => {
     }
   });
 
-  // ── Step 4: Analyze and create recovery case ───────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Step 4: Analyze and create recovery case Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   return await analyzeAndCreateCase(transaction);
 };
 
@@ -226,7 +239,7 @@ const analyzeAndCreateCase = async (transaction) => {
     };
   }
 
-  // Use existing analyzeSingle to run rule engine → AI engine → policy validation → case creation
+  // Use existing analyzeSingle to run rule engine Ã¢â€ â€™ AI engine Ã¢â€ â€™ policy validation Ã¢â€ â€™ case creation
   const result = await recoveryService.analyzeSingle(transaction, riskAssessment);
 
   if (result) {

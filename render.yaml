@@ -4,12 +4,31 @@ services:
     env: node
     buildCommand: npm install --prefix server && npm install --prefix client && npm run build --prefix client
     startCommand: npm start --prefix server
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: USE_MOCK_AI
         value: true
+      - key: PPS_REQUEST_TIMEOUT_MS
+        value: 15000
+      - key: MAX_RETRY_ATTEMPTS
+        value: 5
+      - key: AI_CONFIDENCE_THRESHOLD
+        value: 0.5
+      - key: MAX_AUTO_RECOVERY_AMOUNT
+        value: 100000
+      - key: PAYMENT_PROCESSING_URL
+        sync: false
+      - key: INTERNAL_API_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
       - key: MONGODB_URI
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: GEMINI_TIMEOUT_MS
+        value: 10000

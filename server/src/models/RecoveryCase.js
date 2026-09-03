@@ -17,6 +17,12 @@ const recoveryCaseSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  source: {
+    type: String,
+    enum: ['seed', 'payment_processing_system'],
+    default: 'seed',
+    index: true
+  },
   status: {
     type: String,
     required: true,
